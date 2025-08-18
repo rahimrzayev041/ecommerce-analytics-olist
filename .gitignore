@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+# (keeps notebooks but ignores checkpoints)
+
+# --- Environments ---
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# --- Packaging / build ---
+build/
+dist/
+*.egg-info/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Data (keep placeholders only) ---
+data/raw/*
+!data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/external/*
+!data/external/.gitkeep
+# keep processed data out of git too (usually large/derived)
+data/processed/*
+!data/processed/.gitkeep
+
+# --- Reports artifacts (optional) ---
+reports/figures/*
+!reports/figures/.gitkeep
