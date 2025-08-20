@@ -1,138 +1,113 @@
--- sql/01_kpis.sql
--- Core KPIs for Olist. All metrics computed on delivered orders by purchase month.
--- Run in psql: \i sql/01_kpis.sql
-
 \echo 'Building KPI CTEs...'
 
-WITH
-delivered_orders AS (
-    SELECT
-        o.order_id,
-        o.customer_id,
-        DATE_TRUNC('month', o.order_purchase_timestamp)::date AS month,
-        o.order_purchase_timestamp,
-        o.order_delivered_customer_date,
-        o.order_estimated_delivery_date,
-        (o.order_delivered_customer_date IS NOT NULL) AS is_delivered,
-        (o.order_delivered_customer_date IS NOT NULL AND o.order_delivered_customer_date <= o.order_estimated_delivery_date) AS delivered_on_time
-    FROM orders o
-    WHERE o.order_status = 'delivered'
-      AND o.order_purchase_timestamp IS NOT NULL
+-- ========== 1) Monthly KPIs (single consolidated table) ==========
+WITH month_spine AS (
+  SELECT generate_series(
+           date_trunc('month', (SELECT min(order_purchase_timestamp) FROM orders)),
+           date_trunc('month', (SELECT max(order_purchase_timestamp) FROM orders)),
+           interval '1 month'
+         ) AS month
 ),
-order_gmv AS (
-    SELECT
-        oi.order_id,
-        SUM(oi.price) AS items_value,
-        SUM(oi.freight_value) AS freight_value,
-        SUM(oi.price + oi.freight_value) AS gmv,
-        COUNT(*) AS items_count
-    FROM order_items oi
-    GROUP BY 1
+orders_by_month AS (
+  SELECT date_trunc('month', order_purchase_timestamp) AS month,
+         COUNT(*)::int AS orders_cnt
+  FROM orders
+  GROUP BY 1
 ),
-orders_join AS (
-    SELECT
-        d.*,
-        og.items_value,
-        og.freight_value,
-        og.gmv,
-        og.items_count
-    FROM delivered_orders d
-    LEFT JOIN order_gmv og USING (order_id)
+gmv_by_month AS (
+  SELECT date_trunc('month', o.order_purchase_timestamp) AS month,
+         SUM(oi.price + oi.freight_value) AS gmv
+  FROM orders o
+  JOIN order_items oi USING (order_id)
+  GROUP BY 1
 ),
-customers_map AS (
-    SELECT c.customer_id, c.customer_unique_id
-    FROM customers c
+ontime_by_delivery_month AS (
+  SELECT
+    date_trunc('month', order_delivered_customer_date) AS month,
+    COUNT(*)                                             AS delivered_total,
+    COUNT(*) FILTER (WHERE order_delivered_customer_date <= order_estimated_delivery_date) AS delivered_on_time,
+    COUNT(*) FILTER (WHERE order_delivered_customer_date <= order_estimated_delivery_date)::numeric
+      / NULLIF(COUNT(*),0)                              AS ontime_rate
+  FROM orders
+  WHERE order_delivered_customer_date IS NOT NULL
+  GROUP BY 1
 ),
--- First order month + order counts per unique customer (lifetime)
-customer_orders AS (
-    SELECT
-        m.customer_unique_id,
-        MIN(DATE_TRUNC('month', o.order_purchase_timestamp)::date) AS first_order_month,
-        COUNT(DISTINCT o.order_id) AS total_orders
-    FROM orders o
-    JOIN customers_map m USING (customer_id)
-    WHERE o.order_status IN ('delivered','shipped','invoiced','approved','processing','created')
-      AND o.order_purchase_timestamp IS NOT NULL
-    GROUP BY 1
-),
-base AS (
-    SELECT
-        j.order_id,
-        j.month,
-        j.gmv,
-        j.items_value,
-        j.freight_value,
-        j.items_count,
-        j.delivered_on_time,
-        m.customer_unique_id
-    FROM orders_join j
-    LEFT JOIN customers_map m USING (customer_id)
-),
-monthly AS (
-    SELECT
-        month,
-        COUNT(DISTINCT order_id) AS orders_cnt,
-        SUM(gmv) AS gmv,
-        SUM(items_value) AS items_value,
-        SUM(freight_value) AS freight_value,
-        SUM(CASE WHEN delivered_on_time THEN 1 ELSE 0 END) AS ontime_deliveries,
-        COUNT(DISTINCT CASE WHEN customer_unique_id IS NOT NULL THEN order_id END) AS orders_with_customer
-    FROM base
-    GROUP BY 1
-),
-monthly_enriched AS (
-    SELECT
-        m.month,
-        m.orders_cnt,
-        m.gmv,
-        m.items_value,
-        m.freight_value,
-        (m.gmv / NULLIF(m.orders_cnt,0))::numeric(12,2) AS aov,
-        (m.ontime_deliveries::numeric / NULLIF(m.orders_cnt,0))::numeric(12,4) AS ontime_rate,
-        AVG(m.orders_cnt) OVER (
-            ORDER BY m.month
-            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        )::numeric(12,2) AS orders_rolling_3mo_avg,
-        LAG(m.orders_cnt) OVER (ORDER BY m.month) AS orders_prev_month,
-        CASE WHEN LAG(m.orders_cnt) OVER (ORDER BY m.month) IS NULL THEN NULL
-             ELSE ROUND(100.0*(m.orders_cnt - LAG(m.orders_cnt) OVER (ORDER BY m.month)) / NULLIF(LAG(m.orders_cnt) OVER (ORDER BY m.month),0), 2)
-        END AS orders_mom_pct
-    FROM monthly m
-),
--- Cohort-based repeat rate (by first purchase month)
-cohort_repeat AS (
-    SELECT
-        co.first_order_month AS cohort_month,
-        COUNT(*) FILTER (WHERE co.total_orders >= 2) AS repeat_customers,
-        COUNT(*) AS cohort_size,
-        ROUND(100.0 * COUNT(*) FILTER (WHERE co.total_orders >= 2) / NULLIF(COUNT(*),0), 2) AS repeat_rate_pct
-    FROM customer_orders co
-    GROUP BY 1
-),
--- Reviews by month (proxy CSAT/NPS)
-reviews_monthly AS (
-    SELECT
-        DATE_TRUNC('month', r.review_creation_date)::date AS month,
-        AVG(r.review_score)::numeric(12,2) AS avg_review_score,
-        (COUNT(*) FILTER (WHERE r.review_score >= 4)::numeric / NULLIF(COUNT(*),0))::numeric(12,4) AS share_pos_reviews
-    FROM order_reviews r
-    GROUP BY 1
+reviews_by_month AS (
+  SELECT
+    date_trunc('month', review_creation_date) AS month,
+    COUNT(*)                                  AS review_cnt,
+    AVG(review_score)                         AS avg_review_score,
+    COUNT(*) FILTER (WHERE review_score >= 4)::numeric
+      / NULLIF(COUNT(*),0)                    AS share_pos_reviews
+  FROM order_reviews
+  GROUP BY 1
 )
 SELECT
-    e.month,
-    e.orders_cnt,
-    e.orders_rolling_3mo_avg,
-    e.gmv::numeric(14,2) AS gmv,
-    e.aov,
-    e.ontime_rate,
-    e.orders_prev_month,
-    e.orders_mom_pct,
-    rv.avg_review_score,
-    rv.share_pos_reviews
-FROM monthly_enriched e
-LEFT JOIN reviews_monthly rv USING (month)
-ORDER BY e.month;
+  s.month::date AS month,
+
+  COALESCE(o.orders_cnt, 0) AS orders_cnt,
+
+  ROUND(AVG(COALESCE(o.orders_cnt,0)) OVER (
+          ORDER BY s.month
+          ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+       )::numeric, 2) AS orders_rolling_3mo_avg,
+
+  COALESCE(g.gmv, 0)::numeric AS gmv,
+  ROUND(COALESCE(g.gmv,0)::numeric / NULLIF(COALESCE(o.orders_cnt,0),0), 2) AS aov,
+
+  -- on-time delivery (by delivery month)
+  COALESCE(d.ontime_rate, 0)::numeric AS ontime_rate,
+
+  -- previous month & MoM %
+  LAG(COALESCE(o.orders_cnt,0)) OVER (ORDER BY s.month)            AS orders_prev_month,
+  ROUND((
+    COALESCE(o.orders_cnt,0) - LAG(COALESCE(o.orders_cnt,0)) OVER (ORDER BY s.month)
+  ) / NULLIF(LAG(COALESCE(o.orders_cnt,0)) OVER (ORDER BY s.month), 0)::numeric, 4) AS orders_mom_pct,
+
+  -- review metrics (by review month)
+  ROUND(COALESCE(r.avg_review_score,0)::numeric, 2) AS avg_review_score,
+  ROUND(COALESCE(r.share_pos_reviews,0)::numeric, 4) AS share_pos_reviews
+FROM month_spine s
+LEFT JOIN orders_by_month o  ON s.month = o.month
+LEFT JOIN gmv_by_month g     ON s.month = g.month
+LEFT JOIN reviews_by_month r ON s.month = r.month
+LEFT JOIN ontime_by_delivery_month d ON s.month = d.month
+ORDER BY month;
 
 \echo '--- Cohort repeat rates (first purchase month) ---'
-SELECT * FROM cohort_repeat ORDER BY cohort_month;
 
+-- ========== 2) Cohort Repeat Purchase Rate (self-contained) ==========
+WITH orders_with_unique AS (
+  SELECT o.order_id, o.order_purchase_timestamp, c.customer_unique_id
+  FROM orders o
+  JOIN customers c ON c.customer_id = o.customer_id
+),
+first_purchase AS (
+  SELECT
+    customer_unique_id,
+    date_trunc('month', MIN(order_purchase_timestamp)) AS cohort_month
+  FROM orders_with_unique
+  GROUP BY 1
+),
+order_counts AS (
+  SELECT customer_unique_id, COUNT(*) AS order_cnt
+  FROM orders_with_unique
+  GROUP BY 1
+),
+cohorted AS (
+  SELECT f.cohort_month, o.order_cnt
+  FROM first_purchase f
+  JOIN order_counts o USING (customer_unique_id)
+)
+SELECT
+  cohort_month::date                           AS cohort_month,
+  COUNT(*)                                     AS customers_ge_1,
+  COUNT(*) FILTER (WHERE order_cnt >= 2)       AS customers_ge_2,
+  ROUND(
+    COUNT(*) FILTER (WHERE order_cnt >= 2)::numeric
+    / NULLIF(COUNT(*), 0),
+    4
+  )                                            AS repeat_purchase_rate
+FROM cohorted
+GROUP BY 1
+ORDER BY 1;
