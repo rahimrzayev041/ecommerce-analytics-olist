@@ -1,9 +1,4 @@
 -- sql/00_schema_postgres.sql
--- PostgreSQL DDL for Olist dataset with sensible keys and indexes.
--- If you've already imported CSVs, you can still apply missing PKs/Indexes with ALTERs below.
-
--- Drop existing tables if you need a clean slate (UNCOMMENT CAREFULLY)
--- DROP TABLE IF EXISTS order_reviews, order_payments, order_items, orders, products, sellers, customers, geolocation, product_category_name_translation CASCADE;
 
 -- Customers
 CREATE TABLE IF NOT EXISTS customers (
@@ -45,7 +40,6 @@ CREATE TABLE IF NOT EXISTS order_payments (
     payment_type TEXT,
     payment_installments INTEGER,
     payment_value NUMERIC(10,2)
-    -- No PK in source; (order_id, payment_sequential) is often unique but not guaranteed in dirty data
 );
 
 -- Reviews
@@ -87,7 +81,6 @@ CREATE TABLE IF NOT EXISTS geolocation (
     geolocation_lng DOUBLE PRECISION,
     geolocation_city TEXT,
     geolocation_state TEXT
-    -- No PK on purpose; duplicates exist per zip prefix
 );
 
 -- Category translations (optional)
