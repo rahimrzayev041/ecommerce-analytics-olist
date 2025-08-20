@@ -48,3 +48,4 @@ data/processed/*
 # --- Reports artifacts (optional) ---
 reports/figures/*
 !reports/figures/.gitkeep
+data/processed/orders_clean.csv
