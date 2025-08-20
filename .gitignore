@@ -50,3 +50,5 @@ reports/figures/*
 !reports/figures/.gitkeep
 data/processed/orders_clean.csv
 data/processed/orders_clean.csv
+!data/processed/monthly_kpis.csv
+!data/processed/customer_rfm.csv
