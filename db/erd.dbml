@@ -1,0 +1,90 @@
+Project Olist {
+  database_type: "PostgreSQL"
+  Note: "ERD for Olist e-commerce (simplified)."
+}
+
+Table orders {
+  order_id text [pk]
+  customer_id text
+  order_status text
+  order_purchase_timestamp timestamp
+  order_approved_at timestamp
+  order_delivered_carrier_date timestamp
+  order_delivered_customer_date timestamp
+  order_estimated_delivery_date timestamp
+}
+
+Table order_items {
+  order_id text
+  order_item_id int
+  product_id text
+  seller_id text
+  shipping_limit_date timestamp
+  price numeric
+  freight_value numeric
+
+  Indexes {
+    (product_id)
+    (order_id, order_item_id) [pk]
+  }
+}
+
+Table order_payments {
+  order_id text
+  payment_sequential int
+  payment_type text
+  payment_installments int
+  payment_value numeric
+}
+
+Table order_reviews {
+  review_id text [pk]
+  order_id text
+  review_score int
+  review_comment_title text
+  review_comment_message text
+  review_creation_date timestamp
+  review_answer_timestamp timestamp
+}
+
+Table customers {
+  customer_id text [pk]
+  customer_unique_id text
+  customer_zip_code_prefix int
+  customer_city text
+  customer_state text
+}
+
+Table sellers {
+  seller_id text [pk]
+  seller_zip_code_prefix int
+  seller_city text
+  seller_state text
+}
+
+Table products {
+  product_id text [pk]
+  product_category_name text
+  product_name_length int
+  product_description_length int
+  product_photos_qty int
+  product_weight_g int
+  product_length_cm int
+  product_height_cm int
+  product_width_cm int
+}
+
+Table geolocation {
+  geolocation_zip_code_prefix int
+  geolocation_lat float
+  geolocation_lng float
+  geolocation_city text
+  geolocation_state text
+}
+
+Ref: orders.customer_id > customers.customer_id
+Ref: order_items.order_id > orders.order_id
+Ref: order_items.product_id > products.product_id
+Ref: order_items.seller_id > sellers.seller_id
+Ref: order_payments.order_id > orders.order_id
+Ref: order_reviews.order_id > orders.order_id
